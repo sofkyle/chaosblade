@@ -1,9 +1,10 @@
-![logo](https://chaosblade.oss-cn-hangzhou.aliyuncs.com/doc/image/chaosblade-logo.png)  
+![logo](https://chaosblade.oss-cn-hangzhou.aliyuncs.com/doc/image/chaosblade-logo.png)
 
 # Chaosblade: An Easy to Use and Powerful Chaos Engineering Toolkit
 [![Build Status](https://travis-ci.org/chaosblade-io/chaosblade.svg?branch=master)](https://travis-ci.org/chaosblade-io/chaosblade)
 [![Financial Contributors on Open Collective](https://opencollective.com/chaosblade/all/badge.svg?label=financial+contributors)](https://opencollective.com/chaosblade) [![codecov](https://codecov.io/gh/chaosblade-io/chaosblade/branch/master/graph/badge.svg)](https://codecov.io/gh/chaosblade-io/chaosblade)
 ![license](https://img.shields.io/github/license/chaosblade-io/chaosblade.svg)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/5032/badge)](https://bestpractices.coreinfrastructure.org/projects/5032)
 
 中文版 [README](README_CN.md)
 ## Introduction
@@ -16,7 +17,7 @@ ChaosBlade is not only easy to use, but also supports rich experimental scenario
 * Basic resources: such as CPU, memory, network, disk, process and other experimental scenarios;
 * Java applications: such as databases, caches, messages, JVM itself, microservices, etc. You can also specify any class method to inject various complex experimental scenarios;
 * C ++ applications: such as specifying arbitrary methods or experimental lines of code injection delay, tampering with variables and return values;
-* Docker container: such as killing the container, the CPU in the container, memory, network, disk, process and other experimental scenarios;
+* container: such as killing the container, the CPU in the container, memory, network, disk, process and other experimental scenarios;
 * Cloud-native platforms: For example, CPU, memory, network, disk, and process experimental scenarios on Kubernetes platform nodes, Pod network and Pod itself experimental scenarios such as killing Pods, and container experimental scenarios such as the aforementioned Docker container experimental scenario;
 
 Encapsulating scenes by domain into individual projects can not only standardize the scenes in the domain, but also facilitate the horizontal and vertical expansion of the scenes. By following the chaos experimental model, the chaosblade cli can be called uniformly. The items currently included are:
@@ -24,6 +25,7 @@ Encapsulating scenes by domain into individual projects can not only standardize
 * [chaosblade-spec-go](https://github.com/chaosblade-io/chaosblade-spec-go): Chaos experimental model Golang language definition, scenes implemented using Golang language are easy to implement based on this specification.
 * [chaosblade-exec-os](https://github.com/chaosblade-io/chaosblade-exec-os): Implementation of basic resource experimental scenarios.
 * [chaosblade-exec-docker](https://github.com/chaosblade-io/chaosblade-exec-docker): Docker container experimental scenario implementation, standardized by calling the Docker API.
+* [chaosblade-exec-cri](https://github.com/chaosblade-io/chaosblade-exec-cri): Container experimental scenario implementation, standardized by calling the CRI.
 * [chaosblade-operator](https://github.com/chaosblade-io/chaosblade-operator): Kubernetes platform experimental scenario is implemented, chaos experiments are defined by Kubernetes standard CRD method, it is very convenient to use Kubernetes resource operation method To create, update, and delete experimental scenarios, including using kubectl, client-go, etc., and also using the chaosblade cli tool described above.
 * [chaosblade-exec-jvm](https://github.com/chaosblade-io/chaosblade-exec-jvm): Java application experimental scenario implementation, using Java Agent technology to mount dynamically, without any access, zero-cost use It also supports uninstallation and completely recycles various resources created by the Agent.
 * [chaosblade-exec-cplus](https://github.com/chaosblade-io/chaosblade-exec-cplus): C ++ application experimental scenario implementation, using GDB technology to implement method and code line level experimental scenario injection.
@@ -43,8 +45,8 @@ Use the `blade help [COMMAND]` or `blade [COMMAND] -h` command to view help
 
 ## Experience Demo
 Download the chaosblade demo image and experience the use of the blade toolkit
-  
-![demo.gif](https://chaosblade.oss-cn-hangzhou.aliyuncs.com/agent/release/chaosblade-demo-0.0.1.gif)  
+
+![demo.gif](https://chaosblade.oss-cn-hangzhou.aliyuncs.com/agent/release/chaosblade-demo-0.0.1.gif)
 
 Download image command：
 ```shell script
@@ -81,8 +83,13 @@ make build_with cli os_darwin
 ARGS="cli os" make build_with_linux
 ```
 
+Arch Linux install [chaosblade-bin](https://aur.archlinux.org/packages/chaosblade-bin/)
+```bash
+yay -S chaosblade-bin
+```
+
 ## Bugs and Feedback
-For bug report, questions and discussions please submit [GitHub Issues](https://github.com/chaosblade-io/chaosblade/issues). 
+For bug report, questions and discussions please submit [GitHub Issues](https://github.com/chaosblade-io/chaosblade/issues).
 
 You can also contact us via:
 * Dingding group (recommended for chinese): 23177705
@@ -92,13 +99,10 @@ You can also contact us via:
 * Twitter: [chaosblade.io](https://twitter.com/ChaosbladeI)
 
 ## Contributing
-We welcome every contribution, even if it is just punctuation. See details of [CONTRIBUTING](CONTRIBUTING.md)
+We welcome every contribution, even if it is just punctuation. See details of [CONTRIBUTING](CONTRIBUTING.md). For the promotion ladder of specific community participation students, see： ([Contributor Ladder](https://github.com/chaosblade-io/community/blob/main/Contributor_Ladder.md))
 
 ## Business Registration
 The original intention of our open source project is to lower the threshold for chaos engineering to be implemented in enterprises, so we highly value the use of the project in enterprises. Welcome everyone here [ISSUE](https://github.com/chaosblade-io/chaosblade/issues/32). After registration, you will be invited to join the corporate mail group to discuss the problems encountered by Chaos Engineering in the landing of the company and share the landing experience.
-
-## Ecosystem
-![ecosystem](https://user-images.githubusercontent.com/3992234/72410783-429d7100-37a4-11ea-8314-540560f8a54f.png)
 
 ## Contributors
 

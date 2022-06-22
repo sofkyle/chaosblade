@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package docker
+package cri
 
 import (
 	"context"
@@ -36,15 +36,15 @@ func NewExecutor() spec.Executor {
 }
 
 func (*Executor) Name() string {
-	return "docker"
+	return "cri"
 }
 
 func (e *Executor) Exec(uid string, ctx context.Context, model *spec.ExpModel) *spec.Response {
 	key := exec.GetExecutorKey(model.Target, model.ActionName)
 	executor := e.executors[key]
 	if executor == nil {
-		log.Errorf(ctx, spec.DockerExecNotFound.Sprintf(key))
-		return spec.ResponseFailWithFlags(spec.DockerExecNotFound, key)
+		log.Errorf(ctx, spec.CriExecNotFound.Sprintf(key))
+		return spec.ResponseFailWithFlags(spec.CriExecNotFound, key)
 	}
 	executor.SetChannel(channel.NewLocalChannel())
 	return executor.Exec(uid, ctx, model)

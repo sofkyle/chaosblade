@@ -17,12 +17,12 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"github.com/chaosblade-io/chaosblade-spec-go/log"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 type PreparationRecord struct {
@@ -66,7 +66,7 @@ type PreparationSource interface {
 	UpdatePreparationPidByUid(uid, pid string) error
 
 	// QueryPreparationRecords
-	QueryPreparationRecords(target, status, limit string, asc bool) ([]*PreparationRecord, error)
+	QueryPreparationRecords(target, status, action, flag, limit string, asc bool) ([]*PreparationRecord, error)
 }
 
 // UserVersion PRAGMA [database.]user_version
@@ -103,8 +103,9 @@ var insertPreDML = `INSERT INTO
 func (s *Source) CheckAndInitPreTable() {
 	// check user_version
 	version, err := s.GetUserVersion()
+	ctx := context.Background()
 	if err != nil {
-		logrus.Fatalln(err.Error())
+		log.Fatalf(ctx, err.Error())
 		//log.Error(err, "GetUserVersion err")
 		//os.Exit(1)
 	}
@@ -115,7 +116,7 @@ func (s *Source) CheckAndInitPreTable() {
 	// check the table exists or not
 	exists, err := s.PreparationTableExists()
 	if err != nil {
-		logrus.Fatalln(err.Error())
+		log.Fatalf(ctx, err.Error())
 		//log.Error(err, "PreparationTableExists err")
 		//os.Exit(1)
 	}
@@ -123,7 +124,7 @@ func (s *Source) CheckAndInitPreTable() {
 		// execute alter sql if exists
 		err := s.AlterPreparationTable(addPidColumn)
 		if err != nil {
-			logrus.Fatalln(err.Error())
+			log.Fatalf(ctx, err.Error())
 			//log.Error(err, "AlterPreparationTable err", "addPidColumn", addPidColumn)
 			//os.Exit(1)
 		}
@@ -131,7 +132,7 @@ func (s *Source) CheckAndInitPreTable() {
 		// execute create table
 		err = s.InitPreparationTable()
 		if err != nil {
-			logrus.Fatalln(err.Error())
+			log.Fatalf(ctx, err.Error())
 			//log.Error(err, "InitPreparationTable err")
 			//os.Exit(1)
 		}
@@ -139,7 +140,7 @@ func (s *Source) CheckAndInitPreTable() {
 	// update userVersion to new
 	err = s.UpdateUserVersion(UserVersion)
 	if err != nil {
-		logrus.Fatalln(err.Error())
+		log.Fatalf(ctx, err.Error())
 		//log.Error(err, "UpdateUserVersion err", "UserVersion", UserVersion)
 		//os.Exit(1)
 	}
@@ -176,10 +177,10 @@ func (s *Source) PreparationTableExists() (bool, error) {
 	}
 	defer rows.Close()
 	var c int
-	for rows.Next() {
+	if rows.Next() {
 		rows.Scan(&c)
-		break
 	}
+
 	return c != 0, nil
 }
 
@@ -230,8 +231,12 @@ func (s *Source) QueryPreparationByUid(uid string) (*PreparationRecord, error) {
 // QueryRunningPreByTypeAndProcess returns the first record matching the process id or process name
 func (s *Source) QueryRunningPreByTypeAndProcess(programType string, processName, processId string) (*PreparationRecord, error) {
 	var query = `SELECT * FROM preparation WHERE program_type = ? and status = "Running"`
-	if processId != "" || processName != "" {
-		query = fmt.Sprintf(`%s and (pid = ? OR process = ?)`, query)
+	if processId != "" && processName != "" {
+		query = fmt.Sprintf(`%s and pid = ? and process = ?`, query)
+	} else if processId != "" {
+		query = fmt.Sprintf(`%s and pid = ?`, query)
+	} else if processName != "" {
+		query = fmt.Sprintf(`%s and process = ?`, query)
 	}
 	stmt, err := s.DB.Prepare(query)
 	if err != nil {
@@ -239,8 +244,12 @@ func (s *Source) QueryRunningPreByTypeAndProcess(programType string, processName
 	}
 	defer stmt.Close()
 	var rows *sql.Rows
-	if processId != "" || processName != "" {
+	if processId != "" && processName != "" {
 		rows, err = stmt.Query(programType, processId, processName)
+	} else if processId != "" {
+		rows, err = stmt.Query(programType, processId)
+	} else if processName != "" {
+		rows, err = stmt.Query(programType, processName)
 	} else {
 		rows, err = stmt.Query(programType)
 	}
@@ -331,7 +340,7 @@ func (s *Source) UpdatePreparationPidByUid(uid, pid string) error {
 	return nil
 }
 
-func (s *Source) QueryPreparationRecords(target, status, limit string, asc bool) ([]*PreparationRecord, error) {
+func (s *Source) QueryPreparationRecords(target, status, action, flag, limit string, asc bool) ([]*PreparationRecord, error) {
 	sql := `SELECT * FROM preparation where 1=1`
 	parameters := make([]interface{}, 0)
 	if target != "" {
@@ -341,6 +350,14 @@ func (s *Source) QueryPreparationRecords(target, status, limit string, asc bool)
 	if status != "" {
 		sql = fmt.Sprintf(`%s and status = ?`, sql)
 		parameters = append(parameters, UpperFirst(status))
+	}
+	if action != "" {
+		sql = fmt.Sprintf(`%s and sub_command = ?`, sql)
+		parameters = append(parameters, action)
+	}
+	if flag != "" {
+		sql = fmt.Sprintf(`%s and flag like ?`, sql)
+		parameters = append(parameters, "%"+flag+"%")
 	}
 	if asc {
 		sql = fmt.Sprintf(`%s order by id asc`, sql)

@@ -19,13 +19,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/chaosblade-io/chaosblade-spec-go/log"
 	"strconv"
 	"strings"
 
 	"github.com/chaosblade-io/chaosblade-operator/pkg/apis/chaosblade/v1alpha1"
 	"github.com/chaosblade-io/chaosblade-spec-go/channel"
 	"github.com/chaosblade-io/chaosblade-spec-go/spec"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/chaosblade-io/chaosblade/data"
@@ -54,7 +54,7 @@ func (dc *DestroyCommand) Init() {
 		Aliases: []string{"d"},
 		Example: destroyExample(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dc.runDestroyWithUid(cmd, args)
+			return dc.runDestroyWithUid(context.Background(), cmd, args)
 		},
 	}
 	flags := dc.command.PersistentFlags()
@@ -67,9 +67,9 @@ func (dc *DestroyCommand) Init() {
 
 // runDestroyWithUid destroy and remove experiment based on Uid and forceRemoveFlag
 // Processes k8s experiments not only local records, but also chaosblade resources in the cluster.
-func (dc *DestroyCommand) runDestroyWithUid(cmd *cobra.Command, args []string) error {
+func (dc *DestroyCommand) runDestroyWithUid(ctx context.Context, cmd *cobra.Command, args []string) error {
 	uid := args[0]
-	logrus.Infof("destroy by %s uid, force-remove: %t, target: %s", uid, dc.forceRemove, dc.expTarget)
+	log.Infof(ctx, "destroy by %s uid, force-remove: %t, target: %s", uid, dc.forceRemove, dc.expTarget)
 	model, err := GetDS().QueryExperimentModelByUid(uid)
 	lowerExpTarget := strings.ToLower(dc.expTarget)
 	isK8sTarget := lowerExpTarget == "kubernetes" || lowerExpTarget == "k8s"
@@ -78,10 +78,9 @@ func (dc *DestroyCommand) runDestroyWithUid(cmd *cobra.Command, args []string) e
 			return dc.destroyAndRemoveK8sExperimentWithoutRecordByForceFlag(cmd, uid)
 		}
 		if err != nil {
-			return spec.ReturnFail(spec.Code[spec.DatabaseError], err.Error())
+			return spec.ResponseFailWithFlags(spec.DatabaseError, "query", err)
 		}
-		return spec.ReturnFail(spec.Code[spec.DataNotFound],
-			fmt.Sprintf("the %s experiment not found, if it's k8s experiment, please add --target k8s --kubeconfig KUBECONFIG to retry", uid))
+		return spec.ResponseFailWithFlags(spec.DataNotFound, uid)
 	}
 	return dc.destroyAndRemoveExperimentByUidAndForceFlag(cmd, err, model, uid, isK8sTarget)
 }
@@ -95,7 +94,7 @@ func (dc *DestroyCommand) destroyAndRemoveK8sExperimentWithoutRecordByForceFlag(
 		return nil
 	}
 	if err == nil && removeResourceErr != nil {
-		return spec.ReturnFail(spec.Code[spec.RemoveRecordError],
+		return spec.ResponseFailWithFlags(spec.DatabaseError, "remove",
 			fmt.Sprintf("the %s has been destroyed, but forcibly remove resource failed, %v", uid, removeResourceErr))
 	}
 	response = err.(*spec.Response)
@@ -123,7 +122,7 @@ func (dc *DestroyCommand) destroyAndRemoveExperimentByUidAndForceFlag(
 			cmd.Println(response.Print())
 			return nil
 		}
-		return spec.ReturnFail(spec.Code[spec.RemoveRecordError],
+		return spec.ResponseFailWithFlags(spec.DatabaseError, "remove",
 			fmt.Sprintf("the %s has been destroyed, but forcibly remove resource failed, %v|%v",
 				uid, removeRecordErr, removeResourceErr))
 	}
@@ -142,7 +141,7 @@ func (dc *DestroyCommand) destroyAndRemoveExperimentByUidAndForceFlag(
 // destroyExperimentByUid destroys experiments with local records, including k8s experiments.
 func (dc *DestroyCommand) destroyExperimentByUid(model *data.ExperimentModel, uid string) (*spec.Response, error) {
 	if model == nil {
-		return nil, spec.Return(spec.Code[spec.DataNotFound], false)
+		return nil, spec.ResponseFailWithFlags(spec.DataNotFound, uid)
 	}
 	if model.Status == Destroyed {
 		result := fmt.Sprintf("command: %s %s %s, destroy time: %s",
@@ -151,7 +150,7 @@ func (dc *DestroyCommand) destroyExperimentByUid(model *data.ExperimentModel, ui
 	}
 	executor, expModel, err := dc.getExecutorAndExpModelByRecord(model)
 	if err != nil {
-		return nil, spec.ReturnFail(spec.Code[spec.ServerError], err.Error())
+		return nil, spec.ResponseFailWithFlags(spec.HandlerExecNotFound, err.Error())
 	}
 	if err = dc.destroyExperiment(uid, executor, expModel); err != nil {
 		return nil, err
@@ -162,19 +161,19 @@ func (dc *DestroyCommand) destroyExperimentByUid(model *data.ExperimentModel, ui
 //destroyK8sExperimentWithoutRecord deletes chaosblade resources by name in the cluster.
 func (dc *DestroyCommand) destroyK8sExperimentWithoutRecord(uid string) (*spec.Response, error) {
 	if uid == "" || dc.kubeconfig == "" {
-		return nil, spec.ReturnFail(spec.Code[spec.IllegalParameters],
-			"illegal arguments, usage: blade destroy UID --target k8s --kubeconfig KUBECONFIG")
+		return nil, spec.ResponseFailWithFlags(spec.ParameterLess,
+			"usage: blade destroy UID --target k8s --kubeconfig KUBECONFIG")
 	}
 	exp, err := kubernetes.GetChaosBladeByName(uid, dc.kubeconfig)
 	if err != nil {
-		return nil, spec.ReturnFail(spec.Code[spec.K8sInvokeError], err.Error())
+		return nil, spec.ResponseFailWithFlags(spec.K8sExecFailed, "GetChaosBlade", err)
 	}
 	if exp.Status.Phase == v1alpha1.ClusterPhaseDestroyed {
 		return spec.ReturnSuccess(exp), nil
 	}
 	executor, expModel, err := dc.getExecutorAndExpModelByChaosBladeResource(exp)
 	if err != nil {
-		return nil, spec.ReturnFail(spec.Code[spec.IllegalParameters], err.Error())
+		return nil, spec.ResponseFailWithFlags(spec.HandlerExecNotFound, err.Error())
 	}
 	if err := dc.destroyExperiment(uid, executor, expModel); err != nil {
 		return nil, err
@@ -201,6 +200,7 @@ func (dc *DestroyCommand) checkAndForceRemoveForExpRecord(uid string) error {
 func (dc *DestroyCommand) destroyExperiment(uid string, executor spec.Executor, expModel *spec.ExpModel) error {
 	// set destroy flag
 	ctx := spec.SetDestroyFlag(context.Background(), uid)
+	ctx = context.WithValue(ctx, spec.Uid, uid)
 	// execute
 	response := executor.Exec(uid, ctx, expModel)
 	if !response.Success {
@@ -302,25 +302,28 @@ func (dc *DestroyCommand) bindFlagsFunction() func(commandFlags map[string]func(
 func (dc *DestroyCommand) actionRunEFunc(target, scope string, _ *actionCommand, actionCommandSpec spec.ExpActionCommandSpec) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		expModel := createExpModel(target, scope, actionCommandSpec.Name(), cmd)
-		logrus.Infof("destroy %+v", expModel)
+		ctx := context.Background()
+		log.Infof(ctx, "destroy %+v", expModel)
 		// If uid exists, use uid first. If the record cannot be found, then continue to destroy using matchers
 		if uid := expModel.ActionFlags["uid"]; uid != "" {
-			err := dc.runDestroyWithUid(cmd, []string{uid})
+			ctx = context.WithValue(ctx, spec.Uid, uid)
+			err := dc.runDestroyWithUid(ctx, cmd, []string{uid})
 			if err == nil {
 				return nil
 			}
 			resp, ok := err.(*spec.Response)
-			if ok && resp.Code != spec.Code[spec.DataNotFound].Code {
+			if ok && resp.Code != spec.DataNotFound.Code {
 				return resp
 			}
-			logrus.Warningf("%s uid not found, so using matchers to continue to destroy", uid)
+			ctx = context.WithValue(context.Background(), spec.Uid, uid)
+			log.Warnf(ctx, "%s uid not found, so using matchers to continue to destroy", uid)
 		}
 		if dc.forceRemove {
-			logrus.Warningf("the force-remove flag does not work if the uid does not exist.")
+			log.Warnf(ctx, "the force-remove flag does not work if the uid does not exist.")
 		}
 		executor := actionCommandSpec.Executor()
 		executor.SetChannel(channel.NewLocalChannel())
-		ctx := spec.SetDestroyFlag(context.Background(), spec.UnknownUid)
+		ctx = spec.SetDestroyFlag(ctx, spec.UnknownUid)
 		response := executor.Exec(spec.UnknownUid, ctx, expModel)
 		if !response.Success {
 			return response
@@ -332,10 +335,10 @@ func (dc *DestroyCommand) actionRunEFunc(target, scope string, _ *actionCommand,
 			subCommand = fmt.Sprintf("%s %s", expModel.Target, expModel.ActionName)
 		}
 		// update status by finding related records
-		logrus.Infof("destroy by model: %+v, command: %s, subCommand: %s", expModel, command, subCommand)
+		log.Infof(ctx, "destroy by model: %+v, command: %s, subCommand: %s", expModel, command, subCommand)
 		experimentModels, err := GetDS().QueryExperimentModelsByCommand(command, subCommand, expModel.ActionFlags)
 		if err != nil {
-			logrus.Warningf("destroy success but query records failed, %v", err)
+			log.Warnf(ctx, "destroy success but query records failed, %v", err)
 		} else {
 			for _, record := range experimentModels {
 				checkError(GetDS().UpdateExperimentModelByUid(record.Uid, Destroyed, ""))
@@ -351,5 +354,10 @@ func (dc *DestroyCommand) actionPostRunEFunc(actionCommand *actionCommand) func(
 }
 
 func destroyExample() string {
-	return `blade destroy 47cc0744f1bb`
+	return `
+# Destroy experiment
+blade destroy 47cc0744f1bb
+
+# Force delete kubernetes experiment
+blade destroy 47cc0744f1bb --target k8s --kubeconfig ~/.kube/config --force-remove`
 }

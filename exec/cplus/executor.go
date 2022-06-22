@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/chaosblade-io/chaosblade-spec-go/log"
 	neturl "net/url"
 
 	"github.com/chaosblade-io/chaosblade-spec-go/channel"
@@ -51,30 +52,32 @@ func (e *Executor) SetChannel(channel spec.Channel) {
 
 func (e *Executor) Exec(uid string, ctx context.Context, model *spec.ExpModel) *spec.Response {
 	var url string
-	port, err := e.getPortFromDB(model)
-	if err != nil {
-		return spec.ReturnFail(spec.Code[spec.ServerError], "cannot get port from local")
+	port, resp := e.getPortFromDB(ctx, uid, model)
+	if resp != nil {
+		return resp
 	}
+
 	if _, ok := spec.IsDestroy(ctx); ok {
 		url = e.destroyUrl(port, uid)
 	} else {
 		url = e.createUrl(port, uid, model)
 	}
-	result, err, code := util.Curl(url)
+	result, err, code := util.Curl(ctx, url)
 	if err != nil {
-		return spec.ReturnFail(spec.Code[spec.CplusProxyCmdError], err.Error())
+		log.Errorf(ctx, spec.HttpExecFailed.Sprintf(url, err))
+		return spec.ResponseFailWithFlags(spec.HttpExecFailed, url, err)
 	}
 	if code == 200 {
 		var resp spec.Response
 		err := json.Unmarshal([]byte(result), &resp)
 		if err != nil {
-			return spec.ReturnFail(spec.Code[spec.CplusProxyCmdError],
-				fmt.Sprintf("unmarshal create command result %s err, %v", result, err))
+			log.Errorf(ctx, spec.ResultUnmarshalFailed.Sprintf(result, err))
+			return spec.ResponseFailWithFlags(spec.ResultUnmarshalFailed, result, err)
 		}
 		return &resp
 	}
-	return spec.ReturnFail(spec.Code[spec.CplusProxyCmdError],
-		fmt.Sprintf("response code is %d, result: %s", code, result))
+	log.Errorf(ctx, spec.HttpExecFailed.Sprintf(url, result))
+	return spec.ResponseFailWithFlags(spec.HttpExecFailed, url, result)
 }
 
 func (e *Executor) createUrl(port, suid string, model *spec.ExpModel) string {
@@ -101,14 +104,16 @@ func (e *Executor) destroyUrl(port, uid string) string {
 
 var db = data.GetSource()
 
-func (e *Executor) getPortFromDB(model *spec.ExpModel) (string, error) {
+func (e *Executor) getPortFromDB(ctx context.Context, uid string, model *spec.ExpModel) (string, *spec.Response) {
 	port := model.ActionFlags["port"]
 	record, err := db.QueryRunningPreByTypeAndProcess("cplus", port, "")
 	if err != nil {
-		return "", err
+		log.Errorf(ctx, spec.DatabaseError.Sprintf("query", err))
+		return "", spec.ResponseFailWithFlags(spec.DatabaseError, "query", err)
 	}
 	if record == nil {
-		return "", fmt.Errorf("%s port not found, please execute prepare command firstly", port)
+		log.Errorf(ctx, spec.ParameterInvalidCplusPort.Sprintf(port))
+		return "", spec.ResponseFailWithFlags(spec.ParameterInvalidCplusPort, port)
 	}
 	return record.Port, nil
 }

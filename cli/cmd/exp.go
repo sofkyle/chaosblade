@@ -17,18 +17,22 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"github.com/chaosblade-io/chaosblade-exec-cri/exec"
+	"github.com/chaosblade-io/chaosblade-operator/exec/model"
+	"github.com/chaosblade-io/chaosblade-spec-go/log"
 	"path"
 
 	"github.com/chaosblade-io/chaosblade-spec-go/channel"
 	"github.com/chaosblade-io/chaosblade-spec-go/spec"
 	"github.com/chaosblade-io/chaosblade-spec-go/util"
 	specutil "github.com/chaosblade-io/chaosblade-spec-go/util"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/chaosblade-io/chaosblade/exec/cplus"
+	"github.com/chaosblade-io/chaosblade/exec/cri"
 	"github.com/chaosblade-io/chaosblade/exec/docker"
 	"github.com/chaosblade-io/chaosblade/exec/jvm"
 	"github.com/chaosblade-io/chaosblade/exec/kubernetes"
@@ -119,6 +123,8 @@ func (ec *baseExpCommandService) registerSubCommands() {
 	ec.registerCplusExpCommands()
 	// register docker command
 	ec.registerDockerExpCommands()
+	// register cri command
+	ec.registerCriExpCommands()
 	// register k8s command
 	ec.registerK8sExpCommands()
 }
@@ -185,12 +191,34 @@ func (ec *baseExpCommandService) registerDockerExpCommands() []*modelCommand {
 		command := ec.registerExpCommand(model, dockerSpec.Name())
 		modelCommands = append(modelCommands, command)
 	}
+
+	file = path.Join(util.GetYamlHome(), fmt.Sprintf("chaosblade-jvm-spec-%s.yaml", version.Ver))
+	models, err = util.ParseSpecsToModel(file, docker.NewExecutor())
+	if err != nil {
+		return nil
+	}
+	for idx := range models.Models {
+		model := &models.Models[idx]
+		model.ExpScope = "docker"
+		spec.AddFlagsToModelSpec(exec.GetExecInContainerFlags, model)
+		command := ec.registerExpCommand(model, dockerSpec.Name())
+		modelCommands = append(modelCommands, command)
+	}
+
 	dockerCmd := ec.registerExpCommand(dockerSpec, "")
 	cobraCmd := dockerCmd.CobraCmd()
 	for _, child := range modelCommands {
 		copyAndAddCommand(cobraCmd, child.command)
 	}
 	return modelCommands
+}
+
+func getResourceFlags() []spec.ExpFlagSpec {
+	coverageFlags := model.GetResourceCoverageFlags()
+	commonFlags := model.GetResourceCommonFlags()
+	containerFlags := model.GetContainerFlags()
+	chaosbladeFlags := model.GetChaosBladeFlags()
+	return append(append(append(coverageFlags, commonFlags...), containerFlags...), chaosbladeFlags...)
 }
 
 func (ec *baseExpCommandService) registerK8sExpCommands() []*modelCommand {
@@ -207,6 +235,20 @@ func (ec *baseExpCommandService) registerK8sExpCommands() []*modelCommand {
 		command := ec.registerExpCommand(model, k8sSpec.Name())
 		modelCommands = append(modelCommands, command)
 	}
+
+	file = path.Join(util.GetYamlHome(), fmt.Sprintf("chaosblade-jvm-spec-%s.yaml", version.Ver))
+	models, err = util.ParseSpecsToModel(file, kubernetes.NewExecutor())
+	if err != nil {
+		return nil
+	}
+	for idx := range models.Models {
+		model := &models.Models[idx]
+		model.ExpScope = "container"
+		spec.AddFlagsToModelSpec(getResourceFlags, model)
+		command := ec.registerExpCommand(model, k8sSpec.Name())
+		modelCommands = append(modelCommands, command)
+	}
+
 	k8sCmd := ec.registerExpCommand(k8sSpec, "")
 	cobraCmd := k8sCmd.CobraCmd()
 
@@ -216,10 +258,46 @@ func (ec *baseExpCommandService) registerK8sExpCommands() []*modelCommand {
 	return modelCommands
 }
 
+// registerCriExpCommands
+func (ec *baseExpCommandService) registerCriExpCommands() []*modelCommand {
+	file := path.Join(util.GetYamlHome(), fmt.Sprintf("chaosblade-cri-spec-%s.yaml", version.Ver))
+	models, err := specutil.ParseSpecsToModel(file, cri.NewExecutor())
+	if err != nil {
+		return nil
+	}
+	criSpec := cri.NewCommandModelSpec()
+	modelCommands := make([]*modelCommand, 0)
+	for idx := range models.Models {
+		model := &models.Models[idx]
+		command := ec.registerExpCommand(model, criSpec.Name())
+		modelCommands = append(modelCommands, command)
+	}
+
+	file = path.Join(util.GetYamlHome(), fmt.Sprintf("chaosblade-jvm-spec-%s.yaml", version.Ver))
+	models, err = util.ParseSpecsToModel(file, cri.NewExecutor())
+	if err != nil {
+		return nil
+	}
+	for idx := range models.Models {
+		model := &models.Models[idx]
+		model.ExpScope = "cri"
+		spec.AddFlagsToModelSpec(exec.GetExecInContainerFlags, model)
+		command := ec.registerExpCommand(model, criSpec.Name())
+		modelCommands = append(modelCommands, command)
+	}
+
+	criCmd := ec.registerExpCommand(criSpec, "")
+	cobraCmd := criCmd.CobraCmd()
+	for _, child := range modelCommands {
+		copyAndAddCommand(cobraCmd, child.command)
+	}
+	return modelCommands
+}
+
 // registerExpCommand
 func (ec *baseExpCommandService) registerExpCommand(commandSpec spec.ExpModelCommandSpec, parentTargetCmd string) *modelCommand {
 	cmdName := commandSpec.Name()
-	if commandSpec.Scope() != "" && commandSpec.Scope() != "host" && commandSpec.Scope() != "docker" {
+	if commandSpec.Scope() != "" && commandSpec.Scope() != "host" && commandSpec.Scope() != "docker" && commandSpec.Scope() != "cri" && commandSpec.Scope() != OperatorCommand {
 		cmdName = fmt.Sprintf("%s-%s", commandSpec.Scope(), commandSpec.Name())
 	}
 	cmd := &cobra.Command{
@@ -227,7 +305,7 @@ func (ec *baseExpCommandService) registerExpCommand(commandSpec spec.ExpModelCom
 		Short: commandSpec.ShortDesc(),
 		Long:  commandSpec.LongDesc(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return spec.ReturnFail(spec.Code[spec.IllegalParameters], "less action command")
+			return spec.ResponseFailWithFlags(spec.CommandIllegal, "less action command")
 		},
 	}
 	// create the experiment command
@@ -250,8 +328,11 @@ func (ec *baseExpCommandService) registerExpCommand(commandSpec spec.ExpModelCom
 		actionCommand := ec.registerActionCommand(commandSpec.Name(), commandSpec.Scope(), action)
 		command.Actions[action.Name()] = actionCommand.ExpActionFlags
 		command.AddCommand(actionCommand)
+
 		executor := action.Executor()
-		executor.SetChannel(channel.NewLocalChannel())
+		if executor != nil {
+			executor.SetChannel(channel.NewLocalChannel())
+		}
 		ec.executors[createExecutorKey(parentTargetCmd, cmdName, action.Name())] = executor
 	}
 
@@ -282,7 +363,6 @@ func (ec *baseExpCommandService) registerActionCommand(target, scope string, act
 	}
 
 	flags := addTimeoutFlag(actionCommandSpec.Flags())
-	flags = addOverrideFlag(flags)
 	ec.bindFlagsFunc(command.ActionFlags, command.command, flags)
 	// set matcher flags
 	ec.bindFlagsFunc(command.MatcherFlags, command.command, actionCommandSpec.Matchers())
@@ -310,32 +390,10 @@ func addTimeoutFlag(flags []spec.ExpFlagSpec) []spec.ExpFlagSpec {
 	return flags
 }
 
-func addOverrideFlag(flags []spec.ExpFlagSpec) []spec.ExpFlagSpec {
-	contains := false
-	for _, flag := range flags {
-		if flag.FlagName() == "override" {
-			contains = true
-			break
-		}
-	}
-	if !contains {
-		// set action flags, always add timeout param
-		flags = append(flags,
-			&spec.ExpFlag{
-				Name:     "override",
-				Desc:     "only for java now, uninstall java agent",
-				NoArgs:   true,
-				Required: false,
-			},
-		)
-	}
-	return flags
-}
-
 // checkError for db operation
 func checkError(err error) {
 	if err != nil {
-		logrus.Warningf(err.Error())
+		log.Warnf(context.Background(), err.Error())
 		//log.V(-1).Info(err.Error())
 	}
 }
@@ -385,4 +443,5 @@ func copyAndAddCommand(parent, child *cobra.Command) {
 	for _, command := range commands {
 		copyAndAddCommand(newChild, command)
 	}
+
 }

@@ -17,13 +17,14 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"github.com/chaosblade-io/chaosblade-spec-go/log"
 	"strings"
 	"time"
 
 	"github.com/chaosblade-io/chaosblade-spec-go/spec"
-	"github.com/sirupsen/logrus"
 )
 
 type ExperimentModel struct {
@@ -57,7 +58,7 @@ type ExperimentSource interface {
 	QueryExperimentModelByUid(uid string) (*ExperimentModel, error)
 
 	// QueryExperimentModels
-	QueryExperimentModels(target, action, status, limit string, asc bool) ([]*ExperimentModel, error)
+	QueryExperimentModels(target, action, flag, status, limit string, asc bool) ([]*ExperimentModel, error)
 
 	// QueryExperimentModelsByCommand
 	// flags value contains necessary parameters generally
@@ -92,15 +93,16 @@ var insertExpDML = `INSERT INTO
 
 func (s *Source) CheckAndInitExperimentTable() {
 	exists, err := s.ExperimentTableExists()
+	ctx := context.Background()
 	if err != nil {
-		logrus.Fatalf(err.Error())
+		log.Fatalf(ctx, err.Error())
 		//log.Error(err, "ExperimentTableExists err")
 		//os.Exit(1)
 	}
 	if !exists {
 		err = s.InitExperimentTable()
 		if err != nil {
-			logrus.Fatalf(err.Error())
+			log.Fatalf(ctx, err.Error())
 			//log.Error(err, "InitExperimentTable err")
 			//os.Exit(1)
 		}
@@ -119,10 +121,10 @@ func (s *Source) ExperimentTableExists() (bool, error) {
 	}
 	defer rows.Close()
 	var c int
-	for rows.Next() {
+	if rows.Next() {
 		rows.Scan(&c)
-		break
 	}
+
 	return c != 0, nil
 }
 
@@ -180,6 +182,7 @@ func (s *Source) QueryExperimentModelByUid(uid string) (*ExperimentModel, error)
 	if err != nil {
 		return nil, err
 	}
+	defer stmt.Close()
 	rows, err := stmt.Query(uid)
 	if err != nil {
 		return nil, err
@@ -195,7 +198,7 @@ func (s *Source) QueryExperimentModelByUid(uid string) (*ExperimentModel, error)
 	return models[0], nil
 }
 
-func (s *Source) QueryExperimentModels(target, action, status, limit string, asc bool) ([]*ExperimentModel, error) {
+func (s *Source) QueryExperimentModels(target, action, flag, status, limit string, asc bool) ([]*ExperimentModel, error) {
 	sql := `SELECT * FROM experiment where 1=1`
 	parameters := make([]interface{}, 0)
 	if target != "" {
@@ -205,6 +208,10 @@ func (s *Source) QueryExperimentModels(target, action, status, limit string, asc
 	if action != "" {
 		sql = fmt.Sprintf(`%s and sub_command = ?`, sql)
 		parameters = append(parameters, action)
+	}
+	if flag != "" {
+		sql = fmt.Sprintf(`%s and flag like ?`, sql)
+		parameters = append(parameters, "%"+flag+"%")
 	}
 	if status != "" {
 		sql = fmt.Sprintf(`%s and status = ?`, sql)
@@ -243,7 +250,7 @@ func (s *Source) QueryExperimentModels(target, action, status, limit string, asc
 
 func (s *Source) QueryExperimentModelsByCommand(command, subCommand string, flags map[string]string) ([]*ExperimentModel, error) {
 	models := make([]*ExperimentModel, 0)
-	experimentModels, err := s.QueryExperimentModels(command, subCommand, "", "", true)
+	experimentModels, err := s.QueryExperimentModels(command, subCommand, "", "", "", true)
 	if err != nil {
 		return models, err
 	}
@@ -299,6 +306,7 @@ func (s *Source) DeleteExperimentModelByUid(uid string) error {
 	if err != nil {
 		return err
 	}
+	defer stmt.Close()
 	_, err = stmt.Exec(uid)
 	if err != nil {
 		return err
